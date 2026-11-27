@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <time.h>
+#include <signal.h>
 #include <sys/mman.h>
 #include <semaphore.h>
 #include <random>
@@ -13,6 +14,35 @@ struct Entry
     char name[11];
     double price;
 };
+
+char *memory;
+int size;
+int *users;
+sem_t *mutex;
+sem_t *empty;
+sem_t *full;
+
+void cleanup(int sig)
+{
+    int last = 0;
+    if (__sync_sub_and_fetch(users, 1) == 0)
+        last = 1;
+
+    munmap(memory, size);
+    sem_close(mutex);
+    sem_close(empty);
+    sem_close(full);
+
+    if (last == 1)
+    {
+        sem_unlink("/pc_mutex");
+        sem_unlink("/pc_empty");
+        sem_unlink("/pc_full");
+        shm_unlink("/pc_shm");
+    }
+
+    _exit(0);
+}
 
 void logMessage(const char *name, const char *text)
 {
@@ -39,17 +69,23 @@ int main(int argc, char *argv[])
     int sleepTime = atoi(argv[4]);
     int n = atoi(argv[5]);
 
-    int size = 2 * sizeof(int) + n * sizeof(Entry);
+    size = 4 * sizeof(int) + n * sizeof(Entry);
     int fd = shm_open("/pc_shm", O_CREAT | O_RDWR, 0666);
     ftruncate(fd, size);
-    char *memory = (char *)mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    memory = (char *)mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    close(fd);
 
     int *in = (int *)memory;
-    Entry *entries = (Entry *)(in + 2);
+    users = in + 2;
+    Entry *entries = (Entry *)(in + 4);
 
-    sem_t *mutex = sem_open("/pc_mutex", O_CREAT, 0666, 1);
-    sem_t *empty = sem_open("/pc_empty", O_CREAT, 0666, n);
-    sem_t *full = sem_open("/pc_full", O_CREAT, 0666, 0);
+    mutex = sem_open("/pc_mutex", O_CREAT, 0666, 1);
+    empty = sem_open("/pc_empty", O_CREAT, 0666, n);
+    full = sem_open("/pc_full", O_CREAT, 0666, 0);
+
+    __sync_fetch_and_add(users, 1);
+    signal(SIGINT, cleanup);
+    signal(SIGTERM, cleanup);
 
     std::random_device device;
     std::mt19937 generator(device());
