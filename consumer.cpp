@@ -3,6 +3,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <sys/mman.h>
 #include <semaphore.h>
 
@@ -12,10 +13,15 @@ struct Entry
     double price;
 };
 
+char *memory;
+int size;
+sem_t *mutex;
+sem_t *empty;
+sem_t *full;
+sem_t *users;
+
 const char *names[11] = {"ALUMINIUM", "COPPER", "COTTON", "CRUDEOIL", "GOLD", "LEAD",
                          "MENTHAOIL", "NATURALGAS", "NICKEL", "SILVER", "ZINC"};
-const char *colors[3] = {"\033[36m", "\033[32m", "\033[31m"};
-const char *arrows[3] = {" ", "↑", "↓"};
 
 double price[11];
 double average[11];
@@ -24,6 +30,30 @@ int count[11];
 int priceArrow[11];
 int averageArrow[11];
 
+void cleanup(int sig)
+{
+    sem_trywait(users);
+    int left;
+    sem_getvalue(users, &left);
+
+    munmap(memory, size);
+    sem_close(mutex);
+    sem_close(empty);
+    sem_close(full);
+    sem_close(users);
+
+    if (left == 0)
+    {
+        sem_unlink("/pc_mutex");
+        sem_unlink("/pc_empty");
+        sem_unlink("/pc_full");
+        sem_unlink("/pc_users");
+        shm_unlink("/pc_shm");
+    }
+
+    _exit(0);
+}
+
 int getArrow(double now, double before)
 {
     if (now > before)
@@ -31,6 +61,27 @@ int getArrow(double now, double before)
     if (now < before)
         return 2;
     return 0;
+}
+
+void printValue(double value, int arrow)
+{
+    if (arrow == 1)
+        printf("\033[32m");
+    else if (arrow == 2)
+        printf("\033[31m");
+    else
+        printf("\033[36m");
+
+    printf("%7.2lf", value);
+
+    if (arrow == 1)
+        printf("↑");
+    else if (arrow == 2)
+        printf("↓");
+    else
+        printf(" ");
+
+    printf("\033[0m");
 }
 
 void draw()
@@ -43,9 +94,9 @@ void draw()
     for (int i = 0; i < 11; i++)
     {
         printf("| %-11s | ", names[i]);
-        printf("%s%7.2lf%s\033[0m", colors[priceArrow[i]], price[i], arrows[priceArrow[i]]);
+        printValue(price[i], priceArrow[i]);
         printf(" | ");
-        printf("%s%7.2lf%s\033[0m", colors[averageArrow[i]], average[i], arrows[averageArrow[i]]);
+        printValue(average[i], averageArrow[i]);
         printf(" |\n");
     }
 
@@ -63,18 +114,24 @@ int main(int argc, char *argv[])
 
     int n = atoi(argv[1]);
 
-    int size = 2 * sizeof(int) + n * sizeof(Entry);
+    size = 2 * sizeof(int) + n * sizeof(Entry);
     int fd = shm_open("/pc_shm", O_CREAT | O_RDWR, 0666);
     ftruncate(fd, size);
-    char *memory = (char *)mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    memory = (char *)mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    close(fd);
 
     int *in = (int *)memory;
     int *out = in + 1;
     Entry *entries = (Entry *)(in + 2);
 
-    sem_t *mutex = sem_open("/pc_mutex", O_CREAT, 0666, 1);
-    sem_t *empty = sem_open("/pc_empty", O_CREAT, 0666, n);
-    sem_t *full = sem_open("/pc_full", O_CREAT, 0666, 0);
+    mutex = sem_open("/pc_mutex", O_CREAT, 0666, 1);
+    empty = sem_open("/pc_empty", O_CREAT, 0666, n);
+    full = sem_open("/pc_full", O_CREAT, 0666, 0);
+    users = sem_open("/pc_users", O_CREAT, 0666, 0);
+
+    sem_post(users);
+    signal(SIGINT, cleanup);
+    signal(SIGTERM, cleanup);
 
     draw();
 
@@ -104,6 +161,7 @@ int main(int argc, char *argv[])
         int total = count[k];
         if (total > 5)
             total = 5;
+
         double sum = 0;
         for (int i = 0; i < total; i++)
             sum = sum + history[k][i];
