@@ -44,11 +44,11 @@ void cleanup(int sig)
 
     if (left == 0)
     {
-        sem_unlink("/pc_mutex");
-        sem_unlink("/pc_empty");
-        sem_unlink("/pc_full");
-        sem_unlink("/pc_users");
-        shm_unlink("/pc_shm");
+        sem_unlink("/mutex");
+        sem_unlink("/empty");
+        sem_unlink("/full");
+        sem_unlink("/users");
+        shm_unlink("/shm");
     }
 
     _exit(0);
@@ -115,7 +115,7 @@ int main(int argc, char *argv[])
     int n = atoi(argv[1]);
 
     size = 2 * sizeof(int) + n * sizeof(Entry);
-    int fd = shm_open("/pc_shm", O_CREAT | O_RDWR, 0666);
+    int fd = shm_open("/shm", O_CREAT | O_RDWR, 0666);
     ftruncate(fd, size);
     memory = (char *)mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
     close(fd);
@@ -124,10 +124,10 @@ int main(int argc, char *argv[])
     int *out = in + 1;
     Entry *entries = (Entry *)(in + 2);
 
-    mutex = sem_open("/pc_mutex", O_CREAT, 0666, 1);
-    empty = sem_open("/pc_empty", O_CREAT, 0666, n);
-    full = sem_open("/pc_full", O_CREAT, 0666, 0);
-    users = sem_open("/pc_users", O_CREAT, 0666, 0);
+    mutex = sem_open("/mutex", O_CREAT, 0666, 1);
+    empty = sem_open("/empty", O_CREAT, 0666, n);
+    full = sem_open("/full", O_CREAT, 0666, 0);
+    users = sem_open("/users", O_CREAT, 0666, 0);
 
     sem_post(users);
     signal(SIGINT, cleanup);
