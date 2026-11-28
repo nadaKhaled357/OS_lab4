@@ -91,7 +91,7 @@ int main(int argc, char *argv[])
     signal(SIGTERM, cleanup);
 
     std::random_device device;
-    std::mt19937 generator(device());
+    std::default_random_engine generator(device());
     std::normal_distribution<double> distribution(mean, stddev);
 
     char text[100];
